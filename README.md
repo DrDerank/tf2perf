@@ -43,12 +43,20 @@ patching the wrong code.
 
 ## Usage
 
-Double-click tf2perf.exe, or run it with no arguments. It attaches to TF2 if the DLL is
-already injected, otherwise it injects it, and then stays open so you can type commands.
-Type `inject` any time to attach (game must be running), `help` for the full list, `quit` to exit.
+Run tf2perf.exe. Double-clicking works.
+
+On start it:
+1. looks for the TF2 process with client.dll loaded
+2. injects tf2perf.dll from the same folder as the exe, if it is not in there yet
+3. connects and waits for commands
+
+If TF2 is not running it says so and waits. Start the game, then type `inject`.
+
+`menuoff` is on by default, so every setting is suspended outside a match and menus behave
+stock. Type `help` for the command list, `quit` to exit.
 
 ```
-tf2perf             attach or inject, stay open (double-click friendly)
+tf2perf             attach or inject, stay open
 tf2perf inject      inject, then stay open
 tf2perf status      print hooks and settings once and exit
 ```

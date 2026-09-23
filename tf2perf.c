@@ -75,6 +75,10 @@ static volatile LONG g_far_dist        = 0;   // units; 0 = off (brush models, t
 static volatile LONG g_far_bones_dist  = 0;   // units; 0 = off (SetupBones gate, experimental)
 static volatile LONG g_far_weapons     = 0;   // units; 0 = off (weapon world-model cull, opt-in:
                                               // weapon origins are unreliable, can cull everything)
+static volatile LONG g_menuoff         = 1;   // 1 = suspend all settings outside a match (menu)
+static volatile LONG g_in_game         = 1;   // updated from the engine each frame
+static int           g_menu_saved      = 0;
+static LONG g_sv_mf, g_sv_sim, g_sv_anim, g_sv_animth, g_sv_far, g_sv_farb, g_sv_farw, g_sv_shadows, g_sv_vguisim, g_sv_hud;
 static float         g_view_origin[3]  = { 0.0f, 0.0f, 0.0f };
 
 // ---------------------------------------------------------------------------
@@ -260,6 +264,9 @@ static int get_module_range(const char* name, uint8_t** base, size_t* size)
 // ---------------------------------------------------------------------------
 // detours
 // ---------------------------------------------------------------------------
+static int  engine_in_game(void);
+static void menu_apply(int in_game);
+
 typedef void (__fastcall *RenderViewFn)(void*, const void*, int, int);
 static RenderViewFn o_RenderView = NULL;
 static void __fastcall hk_RenderView(void* self, const void* view, int clearFlags, int whatToDraw)
@@ -267,6 +274,10 @@ static void __fastcall hk_RenderView(void* self, const void* view, int clearFlag
     InterlockedIncrement(&g_frame);
     g_mf_count = 0;
     g_sim_count = 0;
+    {
+        int ig = engine_in_game();
+        if (ig != g_in_game) { g_in_game = ig; menu_apply(ig); }
+    }
     if (view)
     {
         // CViewSetup.origin lives at +0x40 (validated against width@+0x10, height@+0x18)
@@ -527,6 +538,84 @@ static bool __fastcall hk_Bones(void* self, void* out, int nMaxBones, int boneMa
 }
 
 // ---------------------------------------------------------------------------
+// menu detection: force stock behavior outside a match
+// ---------------------------------------------------------------------------
+static void* g_engine = NULL;
+static int   g_engine_ok = 0;
+
+static void engine_init(void)
+{
+    HMODULE e = GetModuleHandleA("engine.dll");
+    if (!e) return;
+    typedef void* (*CreateInterfaceFn)(const char*, int*);
+    CreateInterfaceFn ci = (CreateInterfaceFn)GetProcAddress(e, "CreateInterface");
+    if (!ci) return;
+
+    // VEngineClient013 slot order is fixed by the SDK header; 014 is the fallback
+    g_engine = ci("VEngineClient013", NULL);
+    if (!g_engine) g_engine = ci("VEngineClient014", NULL);
+    if (!g_engine) { logf_("engine: no client interface"); return; }
+
+    // validate the vtable mapping before trusting it: GetMaxClients must look sane
+    typedef int (__fastcall *GetMaxClientsFn)(void*);
+    GetMaxClientsFn gmc = (GetMaxClientsFn)(*(void***)g_engine)[21];
+    int mc = gmc ? gmc(g_engine) : 0;
+    if (mc < 1 || mc > 100)
+    {
+        logf_("engine: GetMaxClients validation failed (%d), menu detection off", mc);
+        g_engine = NULL;
+        return;
+    }
+    g_engine_ok = 1;
+    logf_("engine: client interface ok (maxclients=%d)", mc);
+}
+
+static int engine_in_game(void)
+{
+    if (!g_engine_ok) return 1;
+    typedef int (__fastcall *IsInGameFn)(void*);
+    IsInGameFn fn = (IsInGameFn)(*(void***)g_engine)[26];
+    if (!fn) return 1;
+    int r = fn(g_engine);
+    return (r == 0) ? 0 : 1;
+}
+
+static void menu_apply(int in_game)
+{
+    if (!g_menuoff) return;
+    if (!in_game && !g_menu_saved)
+    {
+        g_sv_mf = g_muzzleflash_cap; g_muzzleflash_cap = 0;
+        g_sv_sim = g_sim_budget; g_sim_budget = 0;
+        g_sv_anim = g_anim_dist; g_anim_dist = 0;
+        g_sv_animth = g_anim_throttle; g_anim_throttle = 1;
+        g_sv_far = g_far_dist; g_far_dist = 0;
+        g_sv_farb = g_far_bones_dist; g_far_bones_dist = 0;
+        g_sv_farw = g_far_weapons; g_far_weapons = 0;
+        g_sv_shadows = g_shadows_on; g_shadows_on = 1;
+        g_sv_vguisim = g_vguisim_throttle; g_vguisim_throttle = 1;
+        g_sv_hud = g_hud_throttle; g_hud_throttle = 1;
+        g_menu_saved = 1;
+        logf_("menu: settings suspended (stock behavior)");
+    }
+    else if (in_game && g_menu_saved)
+    {
+        if (g_muzzleflash_cap == 0) g_muzzleflash_cap = g_sv_mf;
+        if (g_sim_budget == 0) g_sim_budget = g_sv_sim;
+        if (g_anim_dist == 0) g_anim_dist = g_sv_anim;
+        if (g_anim_throttle == 1) g_anim_throttle = g_sv_animth;
+        if (g_far_dist == 0) g_far_dist = g_sv_far;
+        if (g_far_bones_dist == 0) g_far_bones_dist = g_sv_farb;
+        if (g_far_weapons == 0) g_far_weapons = g_sv_farw;
+        if (g_shadows_on == 1) g_shadows_on = g_sv_shadows;
+        if (g_vguisim_throttle == 1) g_vguisim_throttle = g_sv_vguisim;
+        if (g_hud_throttle == 1) g_hud_throttle = g_sv_hud;
+        g_menu_saved = 0;
+        logf_("menu: settings restored");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // hook setup
 // ---------------------------------------------------------------------------
 static void setup_hooks(void)
@@ -539,6 +628,7 @@ static void setup_hooks(void)
     }
     logf_("client.dll base=%p size=0x%08X", base, (unsigned)size);
     animlist_init(base, size);
+    engine_init();
 
     // resolve + hook each target (per-module)
     for (int i = 0; i < (int)NUM_TARGETS; i++)
@@ -694,6 +784,7 @@ static void cmd_help(char* out, size_t cap)
         "                            (shadow/attachment passes; experimental)\n"
         "  farweapons <dist|off>     cull weapon world models beyond N units. OFF by default:\n"
         "                            weapon origins are unreliable and can cull all weapons\n"
+        "  menuoff <on|off>          suspend every setting outside a match (default on)\n"
         "  alloff                    disable every setting at once (back to stock behavior)\n"
         "  reset                     zero all counters\n"
         "  quit                      close this session\n");
@@ -729,13 +820,12 @@ static void cmd_status(char* out, size_t cap)
     append(out, cap,
         "settings:  retire=%s (%.3f)  muzzleflash=%s (%ld)  simbudget=%s (%ld)\n"
         "           animthrottle=%ld  animdist=%ld  shadows=%s  hudthrottle=%ld  vguisim=%ld\n"
-        "           far=%ld  farbones=%ld  farweapons=%ld  view_origin=(%.0f %.0f %.0f)\n",
+        "           far=%ld  farbones=%ld  farweapons=%ld  menuoff=%s  in_game=%ld\n",
         g_retire_cost_set ? "set" : "default", g_retire_cost,
         g_muzzleflash_cap ? "on" : "off", g_muzzleflash_cap,
         g_sim_budget ? "on" : "off", g_sim_budget,
         g_anim_throttle, g_anim_dist, yn(g_shadows_on), g_hud_throttle, g_vguisim_throttle,
-        g_far_dist, g_far_bones_dist, g_far_weapons,
-        g_view_origin[0], g_view_origin[1], g_view_origin[2]);
+        g_far_dist, g_far_bones_dist, g_far_weapons, yn(g_menuoff), g_in_game);
 
     append(out, cap,
         "counters:  muzzleflash total=%ld skipped=%ld\n"
@@ -905,6 +995,13 @@ static void cmd_execute(const char* line, char* out, size_t cap)
             append(out, cap, "farbones: skipping no-output SetupBones beyond %ld units\n", v);
         }
         else append(out, cap, "usage: farbones <200-20000|off>\n");
+    }
+    else if (!_stricmp(s, "menuoff"))
+    {
+        if (!arg) { append(out, cap, "menuoff: %s (in_game=%ld)\n", yn(g_menuoff), g_in_game); }
+        else if (!_stricmp(arg, "on")) { g_menuoff = 1; append(out, cap, "menuoff: on (settings suspended outside a match)\n"); }
+        else if (!_stricmp(arg, "off")) { g_menuoff = 0; append(out, cap, "menuoff: off\n"); }
+        else append(out, cap, "usage: menuoff <on|off>\n");
     }
     else if (!_stricmp(s, "alloff") || !_stricmp(s, "off"))
     {
