@@ -10,10 +10,6 @@ sponsored by winrar.world
 
 ## Hooks
 
-Every hook is found by scanning for a byte pattern at load time and checked before it gets
-patched. If a pattern does not match, that hook is skipped and logged. Nothing is patched
-blind.
-
 | Hook | Effect |
 |---|---|
 | CViewRender::RenderView | frame counter, budget resets, caches the view origin |
@@ -26,20 +22,9 @@ blind.
 | C_BaseAnimating::SetupBones | skips no-output calls past a distance (experimental) |
 | cl_particle_retire_cost | turns on the cheat-flagged particle budget |
 
-## What it does on your machine
-
-- hooks functions inside client.dll and engine.dll in the TF2 process
-- no network code
-- writes %TEMP%\tf2perf.log and its own config file, nothing else
-- only injects into the TF2 process you point it at
-- no startup entries, no services, no persistence
-- uses CreateRemoteThread and LoadLibraryA to inject, MinHook for the detours,
-  CreateNamedPipe for the CLI, fopen for the log
-
 ## VAC
 
-Hooks the game process, so it can get you banned on VAC servers. Use it on your own server
-or a community server, or do not use it. Not affiliated with Valve.
+it a dll can get you vac
 
 ## Build
 

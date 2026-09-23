@@ -284,13 +284,14 @@ static MuzzleFn o_MuzzleSentry = NULL;
 
 static void __fastcall muzzle_common(MuzzleFn orig, const void* data)
 {
-    InterlockedIncrement(&g_mf_total);
+    // main thread only -> plain increments, no locked ops
+    g_mf_total++;
     LONG cap = g_muzzleflash_cap;
     if (cap > 0)
     {
-        if (InterlockedIncrement(&g_mf_count) > cap)
+        if (++g_mf_count > cap)
         {
-            InterlockedIncrement(&g_mf_skipped);
+            g_mf_skipped++;
             return;
         }
     }
@@ -304,6 +305,7 @@ typedef int64_t (__fastcall *SimFn)(void*, void*, void*, void*);
 static SimFn o_Sim = NULL;
 static int64_t __fastcall hk_Sim(void* entry, void* a2, void* a3, void* a4)
 {
+    // may run on particle worker threads -> keep interlocked counters
     InterlockedIncrement(&g_sim_total);
     LONG budget = g_sim_budget;
     if (budget > 0)
@@ -354,8 +356,8 @@ static void __fastcall hk_Anim(void)
     if (d <= 0)
     {
         // legacy global throttle (twitches models/taunts - prefer animdist)
-        if (n > 1 && (g_frame % n) != 0) { InterlockedIncrement(&g_anim_skips); return; }
-        InterlockedIncrement(&g_anim_runs);
+        if (n > 1 && (g_frame % n) != 0) { g_anim_skips++; return; }
+        g_anim_runs++;
         o_Anim();
         return;
     }
@@ -372,9 +374,9 @@ static void __fastcall hk_Anim(void)
         char* e = list + 16 * i;
         void* p = *(void**)e;
         if (!p || !(e[8] & 1)) continue;
-        if (ent_dist_sq(p) > lim2) { InterlockedIncrement(&g_anim_skips); continue; }
+        if (ent_dist_sq(p) > lim2) { g_anim_skips++; continue; }
         ((void (__fastcall *)(void*))(*(void***)p)[194])(p);
-        InterlockedIncrement(&g_anim_runs);
+        g_anim_runs++;
     }
 }
 
@@ -463,11 +465,11 @@ typedef int (__fastcall *BrushFn)(void*, unsigned char, int, char);
 static BrushFn o_Brush = NULL;
 static int __fastcall hk_Brush(void* self, unsigned char a2, int flags, char a4)
 {
-    InterlockedIncrement(&g_brush_calls);
+    g_brush_calls++;
     // never cull the shadow-depth/render-to-texture variants (bits 0x8000000 / 0x40000000)
     if (!(flags & (0x8000000 | 0x40000000)) && far_cull(self))
     {
-        InterlockedIncrement(&g_brush_skips);
+        g_brush_skips++;
         return 1;
     }
     return o_Brush(self, a2, flags, a4);
@@ -477,14 +479,14 @@ typedef int (__fastcall *DrawModelFn)(void*, int);
 static DrawModelFn o_Weapon = NULL;
 static int __fastcall hk_Weapon(void* self, int flags)
 {
-    InterlockedIncrement(&g_weapon_calls);
+    g_weapon_calls++;
     LONG d = g_far_weapons;
     if (d > 0)
     {
         float f = (float)d;
         if (ent_dist_sq(self) > f * f)
         {
-            InterlockedIncrement(&g_weapon_skips);
+            g_weapon_skips++;
             return 0;
         }
     }
@@ -494,10 +496,10 @@ static int __fastcall hk_Weapon(void* self, int flags)
 static DrawModelFn o_TempModel = NULL;
 static int __fastcall hk_TempModel(void* self, int flags)
 {
-    InterlockedIncrement(&g_tempmodel_calls);
+    g_tempmodel_calls++;
     if (far_cull(self))
     {
-        InterlockedIncrement(&g_tempmodel_skips);
+        g_tempmodel_skips++;
         return 0;
     }
     return o_TempModel(self, flags);
@@ -507,6 +509,7 @@ typedef bool (__fastcall *SetupBonesFn)(void*, void*, int, int, float);
 static SetupBonesFn o_Bones = NULL;
 static bool __fastcall hk_Bones(void* self, void* out, int nMaxBones, int boneMask, float t)
 {
+    // may run on shadow-pass worker threads -> keep interlocked counters
     InterlockedIncrement(&g_bones_calls);
     // only gate callers that want no output (shadow/attachment passes); never touch
     // the draw path, which needs the matrices
