@@ -66,6 +66,24 @@ help                full command list
 
 Log: %TEMP%\tf2perf.log
 
+## Recommended settings
+
+Type these in the CLI after `tf2perf inject`:
+
+```
+retire 1
+muzzleflash 4
+simbudget 48
+animdist 2000
+shadows off
+vguisim 2
+far 3000
+status
+```
+
+`animdist` only skips animations past 2000 units, so nearby players and taunts stay smooth.
+`alloff` turns everything off at once.
+
 ## License
 
 MIT, see LICENSE.
