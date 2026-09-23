@@ -158,12 +158,44 @@ static void dll_path_beside_exe(const char* argv0, char* out, size_t cap)
 }
 
 // ---------------------------------------------------------------------------
+// inject helpers
+// ---------------------------------------------------------------------------
+static int try_inject(void)
+{
+    char dll[MAX_PATH];
+    dll_path_beside_exe(NULL, dll, sizeof(dll));
+    if (GetFileAttributesA(dll) == INVALID_FILE_ATTRIBUTES)
+    {
+        printf("[-] %s not found next to this exe\n", dll);
+        return 0;
+    }
+    DWORD pid = find_tf2_pid();
+    if (!pid)
+    {
+        printf("[-] TF2 is not running (or client.dll is not loaded yet)\n");
+        return 0;
+    }
+    return inject(pid, dll);
+}
+
+static int attach_or_inject(int wait_sec)
+{
+    int pipe = connect_pipe(wait_sec);
+    if (pipe >= 0) return pipe;
+    printf("[=] not attached, trying to inject...\n");
+    if (!try_inject()) return -1;
+    pipe = connect_pipe(15);
+    if (pipe < 0) printf("[-] injected but the pipe never appeared, check %%TEMP%%\\tf2perf.log\n");
+    return pipe;
+}
+
+// ---------------------------------------------------------------------------
 // REPL
 // ---------------------------------------------------------------------------
 static void repl(int pipe)
 {
     char line[512];
-    printf("tf2perf attached. type 'help' for commands, 'quit' to exit.\n");
+    printf("type 'help' for commands, 'inject' to attach to TF2, 'quit' to exit.\n");
     for (;;)
     {
         printf("tf2perf> ");
@@ -174,12 +206,33 @@ static void repl(int pipe)
         while (l && (line[l-1] == '\n' || line[l-1] == '\r')) line[--l] = 0;
         if (!l) continue;
         if (!_stricmp(line, "quit") || !_stricmp(line, "exit")) break;
-        if (!_stricmp(line, "clear")) { system("cls"); continue; }
+        if (!_stricmp(line, "clear") || !_stricmp(line, "cls")) { system("cls"); continue; }
+
+        if (!_stricmp(line, "attach"))
+        {
+            pipe = connect_pipe(2);
+            printf(pipe >= 0 ? "[+] attached\n" : "[-] no pipe - is the game running with the DLL injected?\n");
+            continue;
+        }
+        if (!_stricmp(line, "inject"))
+        {
+            if (pipe >= 0) { printf("[=] already attached\n"); continue; }
+            pipe = attach_or_inject(1);
+            if (pipe >= 0) printf("[+] attached\n");
+            continue;
+        }
+
+        if (pipe < 0)
+        {
+            printf("[-] not attached - type 'inject' (TF2 must be running)\n");
+            continue;
+        }
 
         if (!send_command(pipe, line))
         {
-            printf("[-] pipe error, game may have closed\n");
-            break;
+            printf("[-] connection lost - type 'attach' or 'inject' to reconnect\n");
+            CloseHandle((HANDLE)(intptr_t)pipe);
+            pipe = -1;
         }
     }
 }
@@ -189,7 +242,7 @@ int main(int argc, char** argv)
     if (argc >= 2 && (!_stricmp(argv[1], "-h") || !_stricmp(argv[1], "--help")))
     {
         printf("usage:\n"
-               "  tf2perf                 attach to a running injected game (REPL)\n"
+               "  tf2perf                 double-click friendly: attach or inject, stay open\n"
                "  tf2perf inject          find TF2, inject tf2perf.dll, then REPL\n"
                "  tf2perf <command> ...   send one command\n");
         return 0;
@@ -197,42 +250,29 @@ int main(int argc, char** argv)
 
     if (argc >= 2 && !_stricmp(argv[1], "inject"))
     {
-        char dll[MAX_PATH];
-        dll_path_beside_exe(argv[0], dll, sizeof(dll));
-        if (GetFileAttributesA(dll) == INVALID_FILE_ATTRIBUTES)
-        {
-            printf("[-] %s not found next to this exe\n", dll);
-            return 1;
-        }
-
         int pipe = connect_pipe(1);
-        if (pipe >= 0) { printf("[=] already attached (tf2perf.dll is loaded)\n"); CloseHandle((HANDLE)(intptr_t)pipe); }
-
-        DWORD pid = find_tf2_pid();
-        if (!pid)
+        if (pipe >= 0)
         {
-            printf("[-] TF2 process with client.dll not found (is the game running?)\n");
-            return 1;
+            printf("[=] already attached (tf2perf.dll is loaded)\n");
+            CloseHandle((HANDLE)(intptr_t)pipe);
+            pipe = -1;
         }
-        if (!inject(pid, dll)) return 1;
-
-        pipe = connect_pipe(15);
-        if (pipe < 0) { printf("[-] injected but pipe never appeared, check %%TEMP%%\\tf2perf.log\n"); return 1; }
+        else
+        {
+            if (!try_inject()) return 1;
+            pipe = connect_pipe(15);
+            if (pipe < 0) { printf("[-] injected but pipe never appeared, check %%TEMP%%\\tf2perf.log\n"); return 1; }
+        }
         repl(pipe);
         CloseHandle((HANDLE)(intptr_t)pipe);
         return 0;
     }
 
-    // one-shot or REPL
-    int pipe = connect_pipe(1);
-    if (pipe < 0)
-    {
-        printf("[-] not attached (is TF2 running with tf2perf.dll injected? try: tf2perf inject)\n");
-        return 1;
-    }
-
     if (argc >= 2)
     {
+        int pipe = attach_or_inject(1);
+        if (pipe < 0) return 1;
+
         char cmd[1024] = {0};
         for (int i = 1; i < argc; i++)
         {
@@ -244,7 +284,9 @@ int main(int argc, char** argv)
         return ok ? 0 : 1;
     }
 
+    // no arguments (double-click): attach or inject, then stay open
+    int pipe = attach_or_inject(1);
     repl(pipe);
-    CloseHandle((HANDLE)(intptr_t)pipe);
+    if (pipe >= 0) CloseHandle((HANDLE)(intptr_t)pipe);
     return 0;
 }

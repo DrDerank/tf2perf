@@ -43,10 +43,14 @@ patching the wrong code.
 
 ## Usage
 
+Double-click tf2perf.exe, or run it with no arguments. It attaches to TF2 if the DLL is
+already injected, otherwise it injects it, and then stays open so you can type commands.
+Type `inject` any time to attach (game must be running), `help` for the full list, `quit` to exit.
+
 ```
-tf2perf inject      find TF2, inject, open the CLI
-tf2perf             attach to a game that is already injected
-tf2perf status      print hooks and settings once
+tf2perf             attach or inject, stay open (double-click friendly)
+tf2perf inject      inject, then stay open
+tf2perf status      print hooks and settings once and exit
 ```
 
 CLI commands:
