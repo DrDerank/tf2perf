@@ -1,6 +1,6 @@
 # tf2perf
 
-**Ts ai genratred by the HugeGpt.4.1**
+Thx HugeGpt.4.1
 
 Performance hooks for Team Fortress 2. It injects a DLL into the game, hooks client-side
 functions that cost a lot on weak CPUs, and exposes a CLI so you can turn each one on or off
