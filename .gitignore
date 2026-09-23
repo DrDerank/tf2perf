@@ -1,0 +1,17 @@
+# build artifacts
+*.obj
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# logs / local config
+*.log
+perf_extra.cfg
+
+# editor
+.vs/
+.vscode/
+*.user
